@@ -27,9 +27,8 @@ FALLBACK_GATEWAYS = [
 
 WWW_BASE = "https://www.tiktok.com"
 
-# Notice filter_type=33 corresponds to "Account updates" in System notifications;
-# group=47 is the primary official violation/account-update channel; group=46 is announcements/region prompts.
-CORE_SYSTEM_NOTICE_GROUPS = [47, 46, 84, 210, 214, 69, 13, 226, 227, 228, 229, 661, 702]
+# Notice filter_type=33/51 & group=47/661 correspond directly to "Account updates" in System notifications.
+CORE_SYSTEM_NOTICE_GROUPS = [47, 661]
 
 # /api/violation/v1/get_violation_detail Status enum (from communitysafety module 9057)
 VIOLATION_V1_STATUS: Dict[int, str] = {

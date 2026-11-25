@@ -97,6 +97,10 @@ def run_once_for_account(
     session_mgr: SessionManager,
     do_appeal: bool,
     dry_run: bool,
+    include_studio: bool,
+    settle: bool,
+    quiet_seconds: float,
+    max_wait_seconds: float,
     hide_rejected: bool,
     appeal_text: str,
     as_json: bool,
@@ -111,17 +115,29 @@ def run_once_for_account(
 
     if do_appeal:
         engine = AppealEngine(sess, cookies, gw, session_mgr, spec)
-        summary = engine.process_audit(
-            audit,
-            dry_run=dry_run,
-            hide_rejected=hide_rejected,
-            appeal_text=appeal_text,
-        )
+        if settle and not dry_run:
+            summary = engine.wait_and_appeal_settle(
+                spec.username,
+                user_meta,
+                appeal_studio_posts=include_studio,
+                hide_rejected=hide_rejected,
+                appeal_text=appeal_text,
+                quiet_seconds=quiet_seconds,
+                max_wait_seconds=max_wait_seconds,
+            )
+        else:
+            summary = engine.process_audit(
+                audit,
+                dry_run=dry_run,
+                appeal_studio_posts=include_studio,
+                hide_rejected=hide_rejected,
+                appeal_text=appeal_text,
+            )
         result_payload["appeal_summary"] = summary
         if not as_json:
             print("\n  [3] Результат снятия ограничений:")
             if not summary["details"]:
-                print("      Нет ограничений со статусом CanAppeal=True / CAN_SUBMIT (ничего подавать не нужно).")
+                print("      Нет ограничений со статусом CanAppeal=True (ничего подавать не нужно).")
             for line in summary["details"]:
                 print(f"      {line}")
 
@@ -151,9 +167,21 @@ def main() -> int:
     p_check = sub.add_parser("check", help="Проверить системные уведы и посты без отправки апелляций")
     add_common_args(p_check)
 
-    p_appeal = sub.add_parser("appeal", help="Найти и подать апелляции на ограничения аккаунта и постов")
+    p_appeal = sub.add_parser("appeal", help="Найти и подать апелляции на ВСЕ ограничения Account Updates (`group=47/661`)")
     add_common_args(p_appeal)
     p_appeal.add_argument("--dry-run", action="store_true", help="Показать доступные апелляции без отправки POST")
+    p_appeal.add_argument(
+        "--include-studio",
+        action="store_true",
+        help="Также подавать апелляции на посты в TikTok Studio (по умолчанию ВЫКЛ!)",
+    )
+    p_appeal.add_argument(
+        "--settle",
+        action="store_true",
+        help="Дождаться окончания всей волны уведомлений после залива (0–10+ огранов) и снять все",
+    )
+    p_appeal.add_argument("--quiet-sec", type=float, default=60.0, help="Секунд тишины для завершения --settle (по умолчанию 60)")
+    p_appeal.add_argument("--max-wait-sec", type=float, default=240.0, help="Макс. ожидание волны --settle (по умолчанию 240)")
     p_appeal.add_argument(
         "--hide-rejected",
         action="store_true",
@@ -169,6 +197,7 @@ def main() -> int:
     p_watch.add_argument("--cycles", type=int, default=12, help="Количество циклов проверки (0 = бесконечно)")
     p_watch.add_argument("--interval-min", type=float, default=WATCH_POLL_SECONDS[0], help="Мин. пауза между циклами (сек)")
     p_watch.add_argument("--interval-max", type=float, default=WATCH_POLL_SECONDS[1], help="Макс. пауза между циклами (сек)")
+    p_watch.add_argument("--include-studio", action="store_true", help="Также апилить посты в Studio (по умолчанию ВЫКЛ)")
     p_watch.add_argument("--hide-rejected", action="store_true", help="Скрывать отклонённые посты в Private")
     p_watch.add_argument("--reason-text", default="", help="Опциональный текст пояснения")
 
@@ -198,6 +227,10 @@ def main() -> int:
                     session_mgr=session_mgr,
                     do_appeal=(args.cmd == "appeal"),
                     dry_run=getattr(args, "dry_run", False),
+                    include_studio=getattr(args, "include_studio", False),
+                    settle=getattr(args, "settle", False),
+                    quiet_seconds=getattr(args, "quiet_sec", 60.0),
+                    max_wait_seconds=getattr(args, "max_wait_sec", 240.0),
                     hide_rejected=getattr(args, "hide_rejected", False),
                     appeal_text=getattr(args, "reason_text", ""),
                     as_json=args.json,
@@ -223,6 +256,10 @@ def main() -> int:
                         session_mgr=session_mgr,
                         do_appeal=True,
                         dry_run=False,
+                        include_studio=args.include_studio,
+                        settle=False,
+                        quiet_seconds=60.0,
+                        max_wait_seconds=240.0,
                         hide_rejected=args.hide_rejected,
                         appeal_text=args.reason_text,
                         as_json=args.json,

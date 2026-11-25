@@ -77,7 +77,7 @@ class AccountScanner:
             if resp.status_code == 200:
                 data = resp.json()
                 for flt in data.get("groups_in_filters") or []:
-                    if flt.get("filter_type") in (33, 41, 6, 14):
+                    if flt.get("filter_type") in (33, 51):
                         for g in flt.get("groups") or []:
                             groups.add(int(g))
         except Exception:
@@ -91,7 +91,7 @@ class AccountScanner:
         for i in range(0, len(groups), 20):
             chunk = groups[i : i + 20]
             group_list = json.dumps(
-                [{"count": 25, "group": g, "is_mark_read": 0, "max_time": 0, "min_time": 0} for g in chunk],
+                [{"count": 50, "group": g, "is_mark_read": 0, "max_time": 0, "min_time": 0} for g in chunk],
                 separators=(",", ":"),
             )
             try:
@@ -119,19 +119,38 @@ class AccountScanner:
             reverse=True,
         )
 
+        # Deduplicate strictly by punish_id (never collapse multiple distinct account bans sharing object_id!)
         seen_punish_ids: Set[str] = set()
-        seen_objects: Set[str] = set()
+        resolved_punish_ids: Set[str] = set()
+        candidates: List[NoticeViolation] = []
         for g, item in raw_items:
-            self._process_notice_item(audit, g, item, seen_punish_ids, seen_objects)
+            vio, is_resolved = self._parse_notice_item(audit, g, item)
+            if vio is None:
+                continue
+            if is_resolved:
+                resolved_punish_ids.add(vio.punish_id)
+            if vio.punish_id in seen_punish_ids or len(seen_punish_ids) >= 50:
+                continue
+            seen_punish_ids.add(vio.punish_id)
+            candidates.append(vio)
 
-    def _process_notice_item(
+        for vio in candidates:
+            if vio.punish_id in resolved_punish_ids or (
+                "eligible" in vio.title.lower() and "ineligible" not in vio.title.lower()
+            ):
+                vio.can_appeal = False
+                vio.status_code = 6
+                vio.status_label = VIOLATION_V1_STATUS[6]
+            else:
+                self.enrich_violation_detail(vio, audit.uid)
+            audit.notice_violations.append(vio)
+
+    def _parse_notice_item(
         self,
         audit: AccountAuditResult,
         group: int,
         item: Dict[str, Any],
-        seen_punish_ids: Set[str],
-        seen_objects: Set[str],
-    ) -> None:
+    ) -> Tuple[NoticeViolation | None, bool]:
         nid = str(item.get("nid_str") or item.get("nid") or "")
         ctime = int(
             item.get("create_time")
@@ -193,17 +212,9 @@ class AccountScanner:
         object_type = merged_q.get("object_type") or ""
 
         if not punish_id or not object_id:
-            return
-        if punish_id in seen_punish_ids:
-            return
-        seen_punish_ids.add(punish_id)
+            return None, False
 
         eff_obj_type = object_type or ("4" if object_id == audit.uid else "1")
-        obj_dedup = f"{eff_obj_type}:{object_id}"
-        if obj_dedup in seen_objects:
-            return
-        seen_objects.add(obj_dedup)
-
         try:
             punish_type = int(punish_type_str)
         except ValueError:
@@ -222,13 +233,8 @@ class AccountScanner:
             schema_url=falcon_url or raw_schema,
             web_schema_url=web_schema,
         )
-        if "eligible" in low_title and "ineligible" not in low_title:
-            vio.can_appeal = False
-            vio.status_code = 6
-            vio.status_label = VIOLATION_V1_STATUS[6]
-        else:
-            self.enrich_violation_detail(vio, audit.uid)
-        audit.notice_violations.append(vio)
+        is_resolved = "eligible" in low_title and "ineligible" not in low_title
+        return vio, is_resolved
 
     def enrich_violation_detail(self, vio: NoticeViolation, uid: str) -> None:
         """Query /api/violation/v1/get_violation_detail for exact appealability and status."""

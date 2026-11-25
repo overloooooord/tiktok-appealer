@@ -118,14 +118,36 @@ class StandaloneWebHub:
         )
         return d
 
-    def appeal_one(self, username: str, hide_rejected: bool = True) -> Dict[str, Any]:
+    def appeal_one(
+        self,
+        username: str,
+        hide_rejected: bool = True,
+        appeal_studio_posts: bool = False,
+        settle: bool = False,
+    ) -> Dict[str, Any]:
         spec = self.specs[username]
-        self.log(f"[@{username}] Запуск 3-канального снятия огранов...", "info")
+        self.log(
+            f"[@{username}] Запуск снятия огранов Account updates"
+            + (" (ожидание волны 0..10+)..." if settle else "..."),
+            "info",
+        )
         sess, cookies, user_meta, gw = self.session_mgr.get_authenticated_session(spec)
         scanner = AccountScanner(sess, gw)
-        aud = scanner.run_full_audit(username, user_meta)
         engine = AppealEngine(sess, cookies, gw, self.session_mgr, spec)
-        summary = engine.process_audit(aud, hide_rejected=hide_rejected)
+        if settle:
+            summary = engine.wait_and_appeal_settle(
+                username,
+                user_meta,
+                appeal_studio_posts=appeal_studio_posts,
+                hide_rejected=hide_rejected,
+            )
+        else:
+            aud = scanner.run_full_audit(username, user_meta)
+            summary = engine.process_audit(
+                aud,
+                appeal_studio_posts=appeal_studio_posts,
+                hide_rejected=hide_rejected,
+            )
         self.audit_one(username)
         for line in summary["details"]:
             self.log(f"[@{username}] {line}", "success" if "[OK]" in line else "warn")
@@ -235,10 +257,12 @@ STANDALONE_HTML = r"""<!DOCTYPE html>
   <div class="main">
     <header class="top">
       <strong style="font-size:15.5px;" id="topTitle">Мониторинг и 3-канальное снятие огранов</strong>
-      <div style="display:flex;gap:10px;align-items:center;">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;"><input type="checkbox" id="chkStudio" /> Также посты Studio</label>
         <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;"><input type="checkbox" id="chkHide" checked /> FAILED → Private</label>
-        <button class="btn" onclick="runAll('audit')">↻ HTTP-аудит всех</button>
-        <button class="btn btn-p" onclick="runAll('appeal')">⚡ Снять все ограны</button>
+        <button class="btn" onclick="runAll('audit')">↻ HTTP-аудит</button>
+        <button class="btn btn-ok" onclick="runAll('appeal', true)">⏳ Дождаться волны (0..10)</button>
+        <button class="btn btn-p" onclick="runAll('appeal', false)">⚡ Снять все ограны</button>
       </div>
     </header>
 
@@ -321,7 +345,8 @@ async function refresh(){
       </div>
       <div style="display:flex;gap:7px;">
         <button class="btn btn-sm" onclick="act('${esc(x.username)}','audit')">↻ Аудит</button>
-        <button class="btn btn-sm btn-ok" onclick="act('${esc(x.username)}','appeal')">⚡ Снять ограны</button>
+        <button class="btn btn-sm btn-ok" onclick="act('${esc(x.username)}','appeal',false)">⚡ Снять ограны</button>
+        <button class="btn btn-sm" onclick="act('${esc(x.username)}','appeal',true)">⏳ Ждать волну</button>
       </div>
     </div>`;
   }).join('') || '<div class="card" style="color:var(--muted)">Нет аккаунтов — добавь строки во вкладке Импорт.</div>';
@@ -350,8 +375,8 @@ function renderDr(){
     </div>`;
 }
 
-async function act(u,m){toast('Запущено: '+m+' @'+u);await fetch(`/api/${m}?u=${encodeURIComponent(u)}&hide=${document.getElementById('chkHide').checked?1:0}`,{method:'POST'});await refresh();}
-async function runAll(m){toast('Запущено для всех: '+m);await fetch(`/api/${m}-all?hide=${document.getElementById('chkHide').checked?1:0}`,{method:'POST'});await refresh();}
+async function act(u,m,settle=false){toast('Запущено: '+m+' @'+u);const st=document.getElementById('chkStudio').checked?1:0;const hd=document.getElementById('chkHide').checked?1:0;await fetch(`/api/${m}?u=${encodeURIComponent(u)}&hide=${hd}&studio=${st}&settle=${settle?1:0}`,{method:'POST'});await refresh();}
+async function runAll(m,settle=false){toast('Запущено для всех: '+m);const st=document.getElementById('chkStudio').checked?1:0;const hd=document.getElementById('chkHide').checked?1:0;await fetch(`/api/${m}-all?hide=${hd}&studio=${st}&settle=${settle?1:0}`,{method:'POST'});await refresh();}
 async function priv(u,id){await fetch(`/api/private?u=${encodeURIComponent(u)}&id=${encodeURIComponent(id)}`,{method:'POST'});toast('Пост переведён в Private');}
 async function addLines(){await fetch('/api/add',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({lines:document.getElementById('lines').value,proxy:document.getElementById('px').value})});document.getElementById('lines').value='';toast('Строки добавлены');sw('fleet');await refresh();}
 async function toggleWd(){await fetch('/api/watchdog',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:!ST.watchdog?.enabled,hide:document.getElementById('chkHide').checked})});await refresh();}
@@ -430,7 +455,9 @@ def serve_web(base_dir: str, host: str = "127.0.0.1", port: int = 8085, default_
                 if parsed.path == "/api/appeal":
                     u = (qs.get("u") or [""])[0]
                     hide = (qs.get("hide") or ["1"])[0] == "1"
-                    self._json(200, {"ok": True, "summary": hub.appeal_one(u, hide_rejected=hide)})
+                    studio = (qs.get("studio") or ["0"])[0] == "1"
+                    settle = (qs.get("settle") or ["0"])[0] == "1"
+                    self._json(200, {"ok": True, "summary": hub.appeal_one(u, hide_rejected=hide, appeal_studio_posts=studio, settle=settle)})
                     return
                 if parsed.path == "/api/private":
                     u = (qs.get("u") or [""])[0]
@@ -459,12 +486,14 @@ def serve_web(base_dir: str, host: str = "127.0.0.1", port: int = 8085, default_
                     return
                 if parsed.path in ("/api/audit-all", "/api/appeal-all"):
                     hide = (qs.get("hide") or ["1"])[0] == "1"
+                    studio = (qs.get("studio") or ["0"])[0] == "1"
+                    settle = (qs.get("settle") or ["0"])[0] == "1"
                     for u in list(hub.specs.keys()):
                         try:
                             if parsed.path == "/api/audit-all":
                                 hub.audit_one(u)
                             else:
-                                hub.appeal_one(u, hide_rejected=hide)
+                                hub.appeal_one(u, hide_rejected=hide, appeal_studio_posts=studio, settle=settle)
                         except Exception as exc:
                             hub.log(f"[@{u}] Ошибка: {exc}", "error")
                     self._json(200, {"ok": True})

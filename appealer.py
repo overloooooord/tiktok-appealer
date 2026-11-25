@@ -58,6 +58,7 @@ class AppealEngine:
         self,
         audit: AccountAuditResult,
         dry_run: bool = False,
+        appeal_studio_posts: bool = False,
         hide_rejected: bool = False,
         appeal_text: str = "",
     ) -> Dict[str, Any]:
@@ -91,9 +92,11 @@ class AppealEngine:
                 summary["notice_appeals_verified"] += 1
             summary["details"].append(msg)
 
-        appealable_posts = [
-            p for p in audit.post_penalties if p.appeal_status == 0 or p.v2_can_appeal
-        ]
+        appealable_posts = (
+            [p for p in audit.post_penalties if p.appeal_status == 0 or p.v2_can_appeal]
+            if appeal_studio_posts
+            else []
+        )
         for idx, pp in enumerate(appealable_posts):
             if (idx > 0 or summary["notice_appeals_attempted"] > 0) and not dry_run:
                 delay = random.uniform(*APPEAL_STAGGER_SECONDS)
@@ -444,3 +447,73 @@ class AppealEngine:
             return False, f"[CLEANUP-WARN] Ответ смены приватности {item_id}: {r.text[:160]}"
         except Exception as e:
             return False, f"[CLEANUP-ERR] {item_id}: {e}"
+
+    def wait_and_appeal_settle(
+        self,
+        username: str,
+        user_meta: Dict[str, Any],
+        *,
+        appeal_studio_posts: bool = False,
+        hide_rejected: bool = False,
+        appeal_text: str = "",
+        quiet_seconds: float = 60.0,
+        max_wait_seconds: float = 240.0,
+        poll_interval_seconds: float = 14.0,
+    ) -> Dict[str, Any]:
+        """
+        Poll Account Updates repeatedly until `quiet_seconds` pass with zero new restrictions arriving
+        (handles waves of 0, 2, or up to 10+ bans trickling in during/after upload).
+        """
+        start_ts = time.monotonic()
+        last_activity_ts = start_ts
+        seen_appealable: set[str] = set()
+        agg: Dict[str, Any] = {
+            "notice_appeals_attempted": 0,
+            "notice_appeals_verified": 0,
+            "post_appeals_attempted": 0,
+            "post_appeals_verified": 0,
+            "posts_hidden": 0,
+            "details": [],
+        }
+
+        while True:
+            audit = self.scanner.run_full_audit(username, user_meta)
+            new_hit = False
+            for v in audit.notice_violations:
+                if (v.can_appeal or v.status_code == 1) and v.punish_id not in seen_appealable:
+                    seen_appealable.add(v.punish_id)
+                    new_hit = True
+
+            step_sum = self.process_audit(
+                audit,
+                dry_run=False,
+                appeal_studio_posts=appeal_studio_posts,
+                hide_rejected=hide_rejected,
+                appeal_text=appeal_text,
+            )
+            for k in (
+                "notice_appeals_attempted",
+                "notice_appeals_verified",
+                "post_appeals_attempted",
+                "post_appeals_verified",
+                "posts_hidden",
+            ):
+                agg[k] += step_sum[k]
+            agg["details"].extend(step_sum["details"])
+            if step_sum["notice_appeals_verified"] or step_sum["post_appeals_verified"]:
+                new_hit = True
+
+            now_ts = time.monotonic()
+            if new_hit:
+                last_activity_ts = now_ts
+            elapsed = now_ts - start_ts
+            idle = now_ts - last_activity_ts
+            if elapsed >= max_wait_seconds or (idle >= quiet_seconds and elapsed >= quiet_seconds):
+                break
+            print(
+                f"  [~] Ожидание волны огранов @{username}: подано={agg['notice_appeals_verified']}, "
+                f"тишина={idle:.0f}/{quiet_seconds:.0f}с (всего {elapsed:.0f}/{max_wait_seconds:.0f}с)..."
+            )
+            time.sleep(poll_interval_seconds)
+
+        return agg
