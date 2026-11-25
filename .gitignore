@@ -1,0 +1,19 @@
+# Sessions, browser profiles, cookies & token caches (NEVER commit!)
+sessions/
+*.db
+*.sqlite
+*.sqlite3
+accounts.txt
+accounts.json
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dist/
+build/

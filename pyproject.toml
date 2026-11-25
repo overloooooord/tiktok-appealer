@@ -1,0 +1,15 @@
+[project]
+name = "tiktok-appealer"
+version = "0.2.0"
+description = "Standalone TikTok FYP & Account Updates restriction scanner, 3-channel appealer, and Outlook Hub OTP login manager"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "curl_cffi>=0.7.0",
+    "httpx[socks]>=0.28.0",
+    "playwright>=1.50.0",
+    "pyotp>=2.9.0",
+]
+
+[project.scripts]
+tiktok-appealer = "main:main"
