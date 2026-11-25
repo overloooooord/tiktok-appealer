@@ -48,4 +48,7 @@ python3 main.py appeal 'login:pass:mail@outlook.com:mail_pass:rec@polosmail.com:
 
 # 3. Фоновый сторож пачки аккаунтов после залива (опрос по кукам раз в 95–165 сек без повторных логинов)
 python3 main.py watch accounts.txt --file --proxy 'socks5://user:pass@host:port' --cycles 0 --hide-rejected
+
+# 4. Запустить красивую веб-панель управления ограничениями в браузере (http://127.0.0.1:8085)
+python3 main.py web --port 8085 --proxy 'socks5://user:pass@host:port'
 ```

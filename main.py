@@ -172,7 +172,19 @@ def main() -> int:
     p_watch.add_argument("--hide-rejected", action="store_true", help="Скрывать отклонённые посты в Private")
     p_watch.add_argument("--reason-text", default="", help="Опциональный текст пояснения")
 
+    p_web = sub.add_parser("web", help="Запустить веб-интерфейс управления ограничениями (http://127.0.0.1:8085)")
+    p_web.add_argument("--host", default="127.0.0.1", help="Хост веб-панели")
+    p_web.add_argument("--port", type=int, default=8085, help="Порт веб-панели")
+    p_web.add_argument("--proxy", default=None, help="Прокси по умолчанию")
+    p_web.add_argument("--allow-direct", action="store_true", help="Разрешить запросы без прокси")
+
     args = parser.parse_args()
+    if args.cmd == "web":
+        from web import serve_web
+
+        serve_web(BASE_DIR, host=args.host, port=args.port, default_proxy=args.proxy, allow_direct=args.allow_direct)
+        return 0
+
     specs = load_accounts(args.target, args.file, args.proxy)
     session_mgr = SessionManager(BASE_DIR, allow_direct=args.allow_direct)
 
